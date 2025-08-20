@@ -1,0 +1,247 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ML Model Predictor - Healthcare Intelligence</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Custom CSS -->
+    <style>
+        body {
+            background-color: #f8f9fa;
+            font-family: 'Arial', sans-serif;
+        }
+        .header {
+            background-color: #004d60;
+            color: white;
+            padding: 1rem;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .container {
+            max-width: 900px;
+            margin-top: 2rem;
+        }
+        .card {
+            border: none;
+            border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+        }
+        .btn-primary {
+            background-color: #005b99;
+            border: none;
+            border-radius: 6px;
+            transition: background-color 0.3s ease;
+        }
+        .btn-primary:hover {
+            background-color: #003d66;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+        .status-healthy {
+            background-color: #28a745;
+        }
+        .status-unhealthy {
+            background-color: #dc3545;
+        }
+        .result-table {
+            margin-top: 1.5rem;
+        }
+        .alert {
+            margin-top: 1rem;
+            border-radius: 6px;
+        }
+        .form-label {
+            font-weight: 500;
+            color: #333;
+        }
+        .intro-section {
+            margin-bottom: 1.5rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>ML Model Predictor</h1>
+        <p>Healthcare Intelligence Dashboard</p>
+        <p>API Status: <span id="status-indicator" class="status-indicator status-unhealthy"></span>
+        <span id="status-text">Checking...</span></p>
+    </div>
+    <div class="container">
+        <!-- Introduction Section -->
+        <div class="intro-section">
+            <h4>Welcome to the ML Model Predictor</h4>
+            <p>
+                Upload one or more zip files containing your data for analysis. Each zip file should include the necessary data files (e.g., CSV, JSON) compatible with our machine learning model. Click "Choose Files" to select your zip files, then click "Run Prediction" to view results.
+            </p>
+        </div>
+        <!-- Input Form -->
+        <div class="card p-4">
+            <h3 class="mb-3">Upload Zip File(s)</h3>
+            <form id="predict-form" enctype="multipart/form-data">
+                <div class="mb-3">
+                    <label for="zip-files" class="form-label">Select Zip File(s)</label>
+                    <input type="file" class="form-control" id="zip-files" accept=".zip" multiple required aria-describedby="zipFilesHelp">
+                    <div id="zipFilesHelp" class="form-text">Select one or more .zip files containing model-compatible data.</div>
+                </div>
+                <button type="submit" class="btn btn-primary" id="submit-btn">Run Prediction</button>
+                <div id="loading" class="spinner-border text-primary mt-3 d-none" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </form>
+        </div>
+        <!-- Results Dashboard -->
+        <div id="result-container" class="result-table d-none">
+            <div class="card p-4">
+                <h3>Prediction Results</h3>
+                <table class="table table-bordered">
+                    <thead>
+                        <tr>
+                            <th scope="col">File Name</th>
+                            <th scope="col">Prediction</th>
+                        </tr>
+                    </thead>
+                    <tbody id="prediction-table-body">
+                        <!-- Results will be appended here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <!-- Error Alert -->
+        <div id="error-container" class="alert alert-danger d-none" role="alert"></div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Custom JavaScript -->
+    <script>
+        const API_URL = "YOUR_API_URL"; // Replace with ngrok or cloud URL (e.g., https://<random>.ngrok-free.app)
+        let predictionHistory = [];
+
+        // Check API health
+        async function checkHealth() {
+            try {
+                const response = await fetch(`${API_URL}/health`);
+                const data = await response.json();
+                const statusIndicator = document.getElementById("status-indicator");
+                const statusText = document.getElementById("status-text");
+                if (data.status === "healthy") {
+                    statusIndicator.classList.remove("status-unhealthy");
+                    statusIndicator.classList.add("status-healthy");
+                    statusText.textContent = "Healthy";
+                } else {
+                    statusText.textContent = "Unhealthy";
+                }
+            } catch (error) {
+                document.getElementById("status-text").textContent = "Unhealthy";
+            }
+        }
+
+        // Handle form submission
+        document.getElementById("predict-form").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const zipFiles = document.getElementById("zip-files").files;
+            const submitBtn = document.getElementById("submit-btn");
+            const loading = document.getElementById("loading");
+            const resultContainer = document.getElementById("result-container");
+            const errorContainer = document.getElementById("error-container");
+            const tableBody = document.getElementById("prediction-table-body");
+
+            // Client-side validation
+            if (zipFiles.length === 0) {
+                errorContainer.textContent = "Please select at least one zip file";
+                errorContainer.classList.remove("d-none");
+                return;
+            }
+
+            // Prepare form data
+            const formData = new FormData();
+            for (let i = 0; i < zipFiles.length; i++) {
+                formData.append("files", zipFiles[i]);
+            }
+
+            // Reset UI
+            errorContainer.classList.add("d-none");
+            submitBtn.disabled = true;
+            loading.classList.remove("d-none");
+
+            try {
+                const response = await fetch(`${API_URL}/predict`, {
+                    method: "POST",
+                    body: formData
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    // Assuming backend returns { predictions: [{ file_name: string, prediction: number }, ...] }
+                    predictionHistory = data.predictions || [{ file_name: "Unknown", prediction: data.prediction }];
+                    tableBody.innerHTML = predictionHistory.map(row => `
+                        <tr>
+                            <td>${row.file_name}</td>
+                            <td>${row.prediction.toFixed(4)}</td>
+                        </tr>
+                    `).join('');
+                    resultContainer.classList.remove("d-none");
+                } else {
+                    errorContainer.textContent = `Error: ${data.detail || "Failed to get prediction"}`;
+                    errorContainer.classList.remove("d-none");
+                }
+            } catch (error) {
+                errorContainer.textContent = `Error: ${error.message || "Network error"}`;
+                errorContainer.classList.remove("d-none");
+            } finally {
+                submitBtn.disabled = false;
+                loading.classList.add("d-none");
+            }
+        });
+
+        // Initialize health check
+        checkHealth();
+        setInterval(checkHealth, 30000);
+    </script>
+</body>
+</html>
