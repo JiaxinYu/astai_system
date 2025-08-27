@@ -24,6 +24,7 @@
     }
     .file-history p {
       margin: 5px 0;
+      word-wrap: break-word;
     }
     .main-content {
       width: 60%;
@@ -89,7 +90,7 @@
   </div>
   <div class="sidebar-right">
     <img src="src/astai_white.svg" alt="ASTAI Logo" class="logo">
-    <h3>Perdiction Result</h3>
+    <h3>Prediction Result</h3>
     <div class="result">
       <p><strong>Pathogen Name:</strong> [Pending]</p>
       <p><strong>MDRO Risk:</strong> [Pending]</p>
@@ -97,36 +98,52 @@
   </div>
 
   <script>
-    function uploadFiles() {
-      const fileInput = document.getElementById('fileInput');
-      const files = fileInput.files;
-      const fileHistory = document.getElementById('fileHistory');
-      const now = new Date().toLocaleString();
-
-      if (files.length > 0) {
-        for (const file of files) {
-          const logEntry = { name: file.name, date: now };
-          let history = JSON.parse(localStorage.getItem('fileHistory') || '[]');
-          history.push(logEntry);
-          localStorage.setItem('fileHistory', JSON.stringify(history));
-
+    async function loadHistory() {
+      try {
+        const response = await fetch('http://localhost:8000/history');
+        if (!response.ok) throw new Error('Failed to load history');
+        const history = await response.json();
+        const fileHistory = document.getElementById('fileHistory');
+        fileHistory.innerHTML = '';
+        history.forEach(entry => {
           const p = document.createElement('p');
-          p.textContent = `${file.name} - ${now}`;
+          p.textContent = `${entry.name} - ${entry.date}`;
           fileHistory.appendChild(p);
-        }
+        });
+      } catch (error) {
+        console.error('Error loading history:', error);
       }
     }
 
-    // Load existing history on page load
-    window.onload = function() {
-      const history = JSON.parse(localStorage.getItem('fileHistory') || '[]');
-      const fileHistory = document.getElementById('fileHistory');
-      history.forEach(entry => {
-        const p = document.createElement('p');
-        p.textContent = `${entry.name} - ${entry.date}`;
-        fileHistory.appendChild(p);
-      });
-    };
+    async function uploadFiles() {
+      const fileInput = document.getElementById('fileInput');
+      const files = fileInput.files;
+      if (files.length === 0) {
+        alert('Please select at least one file.');
+        return;
+      }
+
+      const formData = new FormData();
+      for (const file of files) {
+        formData.append('files', file);
+      }
+
+      try {
+        const response = await fetch('http://localhost:8000/upload', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || 'Upload failed');
+        alert(data.message);
+        loadHistory();  // Refresh history after upload
+      } catch (error) {
+        alert('Error: ' + error.message);
+      }
+    }
+
+    // Load history on page load
+    window.onload = loadHistory;
   </script>
 </body>
 </html>
